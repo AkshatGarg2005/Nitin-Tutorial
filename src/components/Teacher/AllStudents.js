@@ -1,8 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { collection, query, where, getDocs, doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { db, firebaseConfig } from '../../config/firebase';
 import { getInitials } from '../../utils/helpers';
-import { HiOutlineSearch } from 'react-icons/hi';
+import { uploadToCloudinary } from '../../utils/cloudinary';
+import toast from 'react-hot-toast';
+import {
+  HiOutlineSearch, HiOutlineTrash, HiOutlinePlus,
+  HiOutlineX, HiOutlineCamera, HiOutlinePhone,
+} from 'react-icons/hi';
 
 export default function AllStudents() {
   const [students, setStudents] = useState([]);
@@ -11,6 +18,16 @@ export default function AllStudents() {
   const [filterBatch, setFilterBatch] = useState('');
   const [loading, setLoading] = useState(true);
   const [expandedStudent, setExpandedStudent] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [form, setForm] = useState({
+    name: '', studentPhone: '', email: '', password: '',
+    aadhaar: '', dob: '', address: '', previousEducation: '',
+    mothersName: '', fathersName: '', guardianName: '', guardianPhone: '',
+    dateOfAdmission: new Date().toISOString().split('T')[0],
+  });
 
   useEffect(() => {
     loadData();
@@ -45,6 +62,118 @@ export default function AllStudents() {
     }).filter(Boolean).join(', ') || '—';
   }
 
+  // --- Delete Student ---
+  async function handleDelete(studentId, studentName) {
+    if (!window.confirm(`Delete "${studentName}"?\n\nThis will remove the student profile and all their attendance, test, and fee records. The login account will remain (must be deleted from Firebase Console).`)) return;
+    try {
+      // Delete related records
+      const [attSnap, testSnap, feeSnap] = await Promise.all([
+        getDocs(query(collection(db, 'attendance'), where('studentId', '==', studentId))),
+        getDocs(query(collection(db, 'testReports'), where('studentId', '==', studentId))),
+        getDocs(query(collection(db, 'fees'), where('studentId', '==', studentId))),
+      ]);
+      const deletes = [];
+      attSnap.docs.forEach((d) => deletes.push(deleteDoc(doc(db, 'attendance', d.id))));
+      testSnap.docs.forEach((d) => deletes.push(deleteDoc(doc(db, 'testReports', d.id))));
+      feeSnap.docs.forEach((d) => deletes.push(deleteDoc(doc(db, 'fees', d.id))));
+      deletes.push(deleteDoc(doc(db, 'users', studentId)));
+      await Promise.all(deletes);
+      toast.success(`${studentName} deleted`);
+      loadData();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to delete student');
+    }
+  }
+
+  // --- Add Student ---
+  function updateField(field, value) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function handlePhotoChange(e) {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) { toast.error('Photo must be under 5MB'); return; }
+      setPhotoFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => setPhotoPreview(reader.result);
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function resetAddForm() {
+    setForm({
+      name: '', studentPhone: '', email: '', password: '',
+      aadhaar: '', dob: '', address: '', previousEducation: '',
+      mothersName: '', fathersName: '', guardianName: '', guardianPhone: '',
+      dateOfAdmission: new Date().toISOString().split('T')[0],
+    });
+    setPhotoFile(null);
+    setPhotoPreview(null);
+    setShowAddForm(false);
+  }
+
+  async function handleAddStudent(e) {
+    e.preventDefault();
+    if (!form.name.trim()) { toast.error('Name is required'); return; }
+    if (!form.email.trim()) { toast.error('Email is required'); return; }
+    if (!form.password || form.password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+
+    setAdding(true);
+    try {
+      // Upload photo if provided
+      let photoURL = '';
+      if (photoFile) {
+        photoURL = await uploadToCloudinary(photoFile);
+      }
+
+      // Use a secondary Firebase app to create the user without signing out the teacher
+      const secondaryApp = initializeApp(firebaseConfig, 'secondary-' + Date.now());
+      const secondaryAuth = getAuth(secondaryApp);
+
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, form.email.trim(), form.password);
+      await signOut(secondaryAuth);
+
+      // Create Firestore user document
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        name: form.name.trim(),
+        studentPhone: form.studentPhone.trim(),
+        email: form.email.trim(),
+        photoURL,
+        aadhaar: form.aadhaar.trim(),
+        dob: form.dob,
+        address: form.address.trim(),
+        previousEducation: form.previousEducation.trim(),
+        mothersName: form.mothersName.trim(),
+        fathersName: form.fathersName.trim(),
+        guardianName: form.guardianName.trim(),
+        guardianPhone: form.guardianPhone.trim(),
+        dateOfAdmission: form.dateOfAdmission,
+        role: 'student',
+        batchIds: [],
+        courseIds: [],
+        createdAt: serverTimestamp(),
+      });
+
+      // Clean up secondary app
+      await deleteApp(secondaryApp);
+
+      toast.success(`${form.name.trim()} added successfully!`);
+      resetAddForm();
+      loadData();
+    } catch (err) {
+      console.error(err);
+      if (err.code === 'auth/email-already-in-use') {
+        toast.error('An account with this email already exists');
+      } else {
+        toast.error(err.message || 'Failed to add student');
+      }
+    } finally {
+      setAdding(false);
+    }
+  }
+
   if (loading) {
     return <div className="spinner-overlay"><div className="spinner"></div></div>;
   }
@@ -55,6 +184,117 @@ export default function AllStudents() {
         <h1>👥 All Students</h1>
         <p>{students.length} students registered</p>
       </div>
+
+      {/* Add Student Button */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button
+          className={`btn ${showAddForm ? 'btn-secondary' : 'btn-primary'} btn-sm`}
+          onClick={() => showAddForm ? resetAddForm() : setShowAddForm(true)}
+          id="add-student-btn"
+        >
+          {showAddForm ? <><HiOutlineX /> Cancel</> : <><HiOutlinePlus /> Add Student</>}
+        </button>
+      </div>
+
+      {/* Add Student Form */}
+      {showAddForm && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3 style={{ fontSize: '1rem', marginBottom: 16 }}>Add New Student</h3>
+          <form onSubmit={handleAddStudent}>
+            {/* Photo */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+              <label htmlFor="add-photo" style={{
+                width: 56, height: 56, borderRadius: '50%', flexShrink: 0,
+                background: 'var(--green-50)', border: '2px dashed var(--green-300)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', overflow: 'hidden', color: 'var(--green-600)',
+              }}>
+                {photoPreview ? (
+                  <img src={photoPreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <HiOutlineCamera style={{ fontSize: '1.25rem' }} />
+                )}
+              </label>
+              <input type="file" id="add-photo" accept="image/*" onChange={handlePhotoChange} style={{ display: 'none' }} />
+              <p style={{ fontSize: '0.8125rem', color: 'var(--gray-500)' }}>
+                {photoFile ? photoFile.name : 'Tap to upload photo (optional)'}
+              </p>
+            </div>
+
+            {/* Core fields */}
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Full Name *</label>
+                <input type="text" className="form-input" placeholder="Student name" value={form.name} onChange={(e) => updateField('name', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Student Phone</label>
+                <input type="tel" className="form-input" placeholder="Phone number" value={form.studentPhone} onChange={(e) => updateField('studentPhone', e.target.value)} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Email *</label>
+                <input type="email" className="form-input" placeholder="Email address" value={form.email} onChange={(e) => updateField('email', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Password *</label>
+                <input type="text" className="form-input" placeholder="Min 6 characters" value={form.password} onChange={(e) => updateField('password', e.target.value)} />
+              </div>
+            </div>
+
+            {/* Personal */}
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">DOB</label>
+                <input type="date" className="form-input" value={form.dob} onChange={(e) => updateField('dob', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Aadhaar</label>
+                <input type="text" className="form-input" placeholder="XXXX XXXX XXXX" maxLength={14} value={form.aadhaar} onChange={(e) => updateField('aadhaar', e.target.value)} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Address</label>
+              <textarea className="form-input" placeholder="Full address" rows={2} value={form.address} onChange={(e) => updateField('address', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Previous Education</label>
+              <input type="text" className="form-input" placeholder="e.g., 10th Pass" value={form.previousEducation} onChange={(e) => updateField('previousEducation', e.target.value)} />
+            </div>
+
+            {/* Family */}
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Mother's Name</label>
+                <input type="text" className="form-input" value={form.mothersName} onChange={(e) => updateField('mothersName', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Father's Name</label>
+                <input type="text" className="form-input" value={form.fathersName} onChange={(e) => updateField('fathersName', e.target.value)} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Guardian Name</label>
+                <input type="text" className="form-input" value={form.guardianName} onChange={(e) => updateField('guardianName', e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Guardian Phone</label>
+                <input type="tel" className="form-input" placeholder="10-digit phone" value={form.guardianPhone} onChange={(e) => updateField('guardianPhone', e.target.value)} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Date of Admission</label>
+              <input type="date" className="form-input" value={form.dateOfAdmission} onChange={(e) => updateField('dateOfAdmission', e.target.value)} />
+            </div>
+
+            <button type="submit" className="btn btn-primary" disabled={adding} id="add-student-submit">
+              {adding ? 'Creating...' : <><HiOutlinePlus /> Create Student Account</>}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -82,7 +322,7 @@ export default function AllStudents() {
         </select>
       </div>
 
-      {/* Student List - Mobile cards */}
+      {/* Student List */}
       {filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🔍</div>
@@ -95,11 +335,13 @@ export default function AllStudents() {
             <div
               key={student.id}
               className="card"
-              style={{ marginBottom: 10, cursor: 'pointer' }}
-              onClick={() => setExpandedStudent(expandedStudent === student.id ? null : student.id)}
+              style={{ marginBottom: 10 }}
             >
               {/* Summary Row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                onClick={() => setExpandedStudent(expandedStudent === student.id ? null : student.id)}
+              >
                 <div className="avatar">
                   {student.photoURL ? (
                     <img src={student.photoURL} alt={student.name} />
@@ -124,44 +366,34 @@ export default function AllStudents() {
               {expandedStudent === student.id && (
                 <div style={{
                   marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--gray-100)',
-                  display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', fontSize: '0.8125rem',
                   animation: 'fadeInUp 0.2s ease-out',
                 }}>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>DOB</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.dob || '—'}</p>
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', fontSize: '0.8125rem',
+                  }}>
+                    <DetailField label="Phone" value={student.studentPhone} />
+                    <DetailField label="DOB" value={student.dob} />
+                    <DetailField label="Aadhaar" value={student.aadhaar} />
+                    <DetailField label="Father" value={student.fathersName} />
+                    <DetailField label="Mother" value={student.mothersName} />
+                    <DetailField label="Guardian" value={student.guardianName} />
+                    <DetailField label="Guardian Phone" value={student.guardianPhone} />
+                    <DetailField label="Previous Education" value={student.previousEducation} />
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <DetailField label="Address" value={student.address} />
+                    </div>
+                    <DetailField label="Admission Date" value={student.dateOfAdmission} />
                   </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Aadhaar</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.aadhaar || '—'}</p>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Father</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.fathersName || '—'}</p>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Mother</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.mothersName || '—'}</p>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Guardian</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.guardianName || '—'}</p>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Guardian Phone</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.guardianPhone || '—'}</p>
-                  </div>
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Address</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.address || '—'}</p>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Previous Education</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.previousEducation || '—'}</p>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>Admission Date</span>
-                    <p style={{ color: 'var(--gray-700)' }}>{student.dateOfAdmission || '—'}</p>
+
+                  {/* Delete button */}
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      className="btn btn-sm"
+                      style={{ color: 'var(--danger)', background: 'var(--danger-light)', border: 'none' }}
+                      onClick={(e) => { e.stopPropagation(); handleDelete(student.id, student.name); }}
+                    >
+                      <HiOutlineTrash /> Delete Student
+                    </button>
                   </div>
                 </div>
               )}
@@ -169,6 +401,17 @@ export default function AllStudents() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function DetailField({ label, value }) {
+  return (
+    <div>
+      <span style={{ color: 'var(--gray-400)', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.3px', fontWeight: 600 }}>
+        {label}
+      </span>
+      <p style={{ color: 'var(--gray-700)' }}>{value || '—'}</p>
     </div>
   );
 }

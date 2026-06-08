@@ -26,6 +26,7 @@ export default function Profile() {
   function startEdit() {
     setForm({
       name: userProfile.name || '',
+      studentPhone: userProfile.studentPhone || '',
       aadhaar: userProfile.aadhaar || '',
       dob: userProfile.dob || '',
       address: userProfile.address || '',
@@ -91,6 +92,7 @@ export default function Profile() {
 
   const fields = [
     { key: 'name', label: 'Full Name', type: 'text' },
+    { key: 'studentPhone', label: 'Student Phone', type: 'tel' },
     { key: 'dob', label: 'Date of Birth', type: 'date' },
     { key: 'aadhaar', label: 'Aadhaar Number', type: 'text' },
     { key: 'address', label: 'Address', type: 'textarea' },

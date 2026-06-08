@@ -12,6 +12,7 @@ import './Auth.css';
 
 const INITIAL_FORM = {
   name: '',
+  studentPhone: '',
   email: '',
   password: '',
   confirmPassword: '',
@@ -98,6 +99,7 @@ export default function Register() {
 
       const profileData = {
         name: form.name.trim(),
+        studentPhone: form.studentPhone.trim(),
         photoURL,
         aadhaar: form.aadhaar.trim(),
         dob: form.dob,
@@ -173,6 +175,20 @@ export default function Register() {
                     value={form.name}
                     onChange={(e) => updateField('name', e.target.value)}
                     id="reg-name"
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Student Phone Number</label>
+                <div className="input-icon-wrapper">
+                  <HiOutlinePhone className="input-icon" />
+                  <input
+                    type="tel"
+                    className="form-input input-with-icon"
+                    placeholder="Student's phone number"
+                    value={form.studentPhone}
+                    onChange={(e) => updateField('studentPhone', e.target.value)}
+                    id="reg-student-phone"
                   />
                 </div>
               </div>
