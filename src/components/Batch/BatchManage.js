@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, deleteDoc, updateDoc, doc, query, where, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { getInitials } from '../../utils/helpers';
 import toast from 'react-hot-toast';
-import { HiOutlinePlus, HiOutlineTrash, HiOutlineUserAdd } from 'react-icons/hi';
+import { HiOutlinePlus, HiOutlineTrash, HiOutlineUserAdd, HiOutlineX, HiOutlineCheck } from 'react-icons/hi';
 
 export default function BatchManage() {
   const [batches, setBatches] = useState([]);
@@ -10,8 +11,10 @@ export default function BatchManage() {
   const [name, setName] = useState('');
   const [timing, setTiming] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showAssign, setShowAssign] = useState(null);
-  const [assignStudentId, setAssignStudentId] = useState('');
+  const [manageBatch, setManageBatch] = useState(null); // batchId being managed
+  const [selectedToAdd, setSelectedToAdd] = useState({}); // studentId -> boolean
+  const [selectedToRemove, setSelectedToRemove] = useState({}); // studentId -> boolean
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -53,44 +56,87 @@ export default function BatchManage() {
   async function handleDelete(batchId) {
     if (!window.confirm('Delete this batch?')) return;
     try {
-      // Remove batchId from all students' batchIds arrays
       const batchStudents = students.filter((s) => (s.batchIds || []).includes(batchId));
-      for (const s of batchStudents) {
-        await updateDoc(doc(db, 'users', s.id), { batchIds: arrayRemove(batchId) });
-      }
-      await deleteDoc(doc(db, 'batches', batchId));
+      const ops = batchStudents.map((s) =>
+        updateDoc(doc(db, 'users', s.id), { batchIds: arrayRemove(batchId) })
+      );
+      ops.push(deleteDoc(doc(db, 'batches', batchId)));
+      await Promise.all(ops);
       toast.success('Batch deleted');
+      if (manageBatch === batchId) setManageBatch(null);
       loadData();
     } catch (err) {
       toast.error('Failed to delete');
     }
   }
 
-  async function handleAssign(batchId) {
-    if (!assignStudentId) { toast.error('Select a student'); return; }
+  function openManage(batchId) {
+    if (manageBatch === batchId) {
+      setManageBatch(null);
+      return;
+    }
+    setManageBatch(batchId);
+    setSelectedToAdd({});
+    setSelectedToRemove({});
+  }
+
+  function toggleAdd(studentId) {
+    setSelectedToAdd((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
+  }
+
+  function toggleRemove(studentId) {
+    setSelectedToRemove((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
+  }
+
+  async function handleAddMultiple(batchId) {
+    const ids = Object.entries(selectedToAdd).filter(([, v]) => v).map(([k]) => k);
+    if (ids.length === 0) { toast.error('Select at least one student'); return; }
+    setSaving(true);
     try {
-      await updateDoc(doc(db, 'users', assignStudentId), {
-        batchIds: arrayUnion(batchId),
-      });
-      toast.success('Student assigned to batch!');
-      setShowAssign(null);
-      setAssignStudentId('');
+      await Promise.all(
+        ids.map((sid) => updateDoc(doc(db, 'users', sid), { batchIds: arrayUnion(batchId) }))
+      );
+      toast.success(`${ids.length} student${ids.length > 1 ? 's' : ''} added to batch!`);
+      setSelectedToAdd({});
       loadData();
     } catch (err) {
-      toast.error('Failed to assign');
+      toast.error('Failed to add students');
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function handleRemoveFromBatch(batchId, studentId) {
+  async function handleRemoveMultiple(batchId) {
+    const ids = Object.entries(selectedToRemove).filter(([, v]) => v).map(([k]) => k);
+    if (ids.length === 0) { toast.error('Select at least one student'); return; }
+    if (!window.confirm(`Remove ${ids.length} student${ids.length > 1 ? 's' : ''} from this batch?`)) return;
+    setSaving(true);
     try {
-      await updateDoc(doc(db, 'users', studentId), {
-        batchIds: arrayRemove(batchId),
-      });
-      toast.success('Student removed from batch');
+      await Promise.all(
+        ids.map((sid) => updateDoc(doc(db, 'users', sid), { batchIds: arrayRemove(batchId) }))
+      );
+      toast.success(`${ids.length} student${ids.length > 1 ? 's' : ''} removed!`);
+      setSelectedToRemove({});
       loadData();
     } catch (err) {
-      toast.error('Failed to remove');
+      toast.error('Failed to remove students');
+    } finally {
+      setSaving(false);
     }
+  }
+
+  function selectAllToAdd(unassigned) {
+    const allSelected = unassigned.every((s) => selectedToAdd[s.id]);
+    const next = {};
+    unassigned.forEach((s) => { next[s.id] = !allSelected; });
+    setSelectedToAdd(next);
+  }
+
+  function selectAllToRemove(assigned) {
+    const allSelected = assigned.every((s) => selectedToRemove[s.id]);
+    const next = {};
+    assigned.forEach((s) => { next[s.id] = !allSelected; });
+    setSelectedToRemove(next);
   }
 
   if (loading) {
@@ -111,25 +157,11 @@ export default function BatchManage() {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Batch Name</label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="e.g., Morning Batch A"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                id="batch-name"
-              />
+              <input type="text" className="form-input" placeholder="e.g., Morning Batch A" value={name} onChange={(e) => setName(e.target.value)} id="batch-name" />
             </div>
             <div className="form-group">
               <label className="form-label">Timing</label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="e.g., 8:00 AM - 10:00 AM"
-                value={timing}
-                onChange={(e) => setTiming(e.target.value)}
-                id="batch-timing"
-              />
+              <input type="text" className="form-input" placeholder="e.g., 8:00 AM - 10:00 AM" value={timing} onChange={(e) => setTiming(e.target.value)} id="batch-timing" />
             </div>
           </div>
           <button type="submit" className="btn btn-primary" id="batch-submit">
@@ -146,17 +178,23 @@ export default function BatchManage() {
       ) : (
         <div className="stagger-list">
           {batches.map((batch) => {
-            const batchStudents = students.filter((s) => (s.batchIds || []).includes(batch.id));
+            const assigned = students.filter((s) => (s.batchIds || []).includes(batch.id));
+            const unassigned = students.filter((s) => !(s.batchIds || []).includes(batch.id));
+            const isManaging = manageBatch === batch.id;
+            const addCount = Object.values(selectedToAdd).filter(Boolean).length;
+            const removeCount = Object.values(selectedToRemove).filter(Boolean).length;
+
             return (
               <div className="card" key={batch.id} style={{ marginBottom: 12 }}>
+                {/* Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                   <div>
                     <h4>{batch.name}</h4>
                     <p style={{ fontSize: '0.8125rem', color: 'var(--gray-500)' }}>{batch.timing || 'No timing set'}</p>
                   </div>
                   <div style={{ display: 'flex', gap: 4 }}>
-                    <button className="btn-icon btn-sm" style={{ color: 'var(--green-600)' }} onClick={() => setShowAssign(showAssign === batch.id ? null : batch.id)} title="Assign student">
-                      <HiOutlineUserAdd />
+                    <button className={`btn-icon btn-sm`} style={{ color: isManaging ? 'var(--gray-500)' : 'var(--green-600)' }} onClick={() => openManage(batch.id)} title="Manage students">
+                      {isManaging ? <HiOutlineX /> : <HiOutlineUserAdd />}
                     </button>
                     <button className="btn-icon btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(batch.id)} title="Delete batch">
                       <HiOutlineTrash />
@@ -164,34 +202,138 @@ export default function BatchManage() {
                   </div>
                 </div>
 
+                {/* Current students */}
                 <div style={{ fontSize: '0.75rem', color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600, marginBottom: 6 }}>
-                  Students ({batchStudents.length})
+                  Students ({assigned.length})
                 </div>
-                {batchStudents.length > 0 ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {batchStudents.map((s) => (
-                      <span key={s.id} className="badge badge-info" style={{ cursor: 'pointer' }} onClick={() => handleRemoveFromBatch(batch.id, s.id)} title="Click to remove">
-                        {s.name} ✕
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p style={{ fontSize: '0.8125rem', color: 'var(--gray-400)' }}>No students assigned</p>
-                )}
 
-                {showAssign === batch.id && (
-                  <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-                    <select className="form-input" style={{ flex: 1, padding: '8px 12px', fontSize: '0.875rem' }} value={assignStudentId} onChange={(e) => setAssignStudentId(e.target.value)}>
-                      <option value="">Select student</option>
-                      {students
-                        .filter((s) => !(s.batchIds || []).includes(batch.id))
-                        .map((s) => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                    </select>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => handleAssign(batch.id)}>
-                      Assign
-                    </button>
+                {!isManaging ? (
+                  // Simple badge view
+                  assigned.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {assigned.map((s) => (
+                        <span key={s.id} className="badge badge-info" style={{ fontSize: '0.75rem' }}>
+                          {s.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--gray-400)' }}>No students assigned</p>
+                  )
+                ) : (
+                  // Full management UI
+                  <div style={{ marginTop: 4 }}>
+                    {/* Remove section */}
+                    {assigned.length > 0 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          marginBottom: 8,
+                        }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--danger)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                            In this batch — select to remove
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
+                            onClick={() => selectAllToRemove(assigned)}
+                          >
+                            {assigned.every((s) => selectedToRemove[s.id]) ? 'Deselect All' : 'Select All'}
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {assigned.map((s) => (
+                            <div
+                              key={s.id}
+                              onClick={() => toggleRemove(s.id)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 10,
+                                padding: '8px 10px', borderRadius: 'var(--radius-md)',
+                                cursor: 'pointer', transition: 'background 0.15s',
+                                background: selectedToRemove[s.id] ? 'var(--danger-light)' : 'var(--gray-50)',
+                                border: `1.5px solid ${selectedToRemove[s.id] ? 'var(--danger)' : 'transparent'}`,
+                              }}
+                            >
+                              <input type="checkbox" checked={!!selectedToRemove[s.id]} onChange={() => toggleRemove(s.id)} onClick={(e) => e.stopPropagation()} />
+                              <div className="avatar" style={{ width: 28, height: 28, fontSize: '0.625rem', flexShrink: 0 }}>
+                                {s.photoURL ? <img src={s.photoURL} alt={s.name} /> : getInitials(s.name)}
+                              </div>
+                              <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>{s.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {removeCount > 0 && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={saving}
+                            onClick={() => handleRemoveMultiple(batch.id)}
+                            style={{ marginTop: 8, color: 'var(--white)', background: 'var(--danger)', border: 'none' }}
+                          >
+                            <HiOutlineTrash /> Remove {removeCount} Student{removeCount > 1 ? 's' : ''}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Add section */}
+                    {unassigned.length > 0 && (
+                      <div>
+                        <div style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          marginBottom: 8,
+                        }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--green-700)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                            Not in batch — select to add
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            style={{ fontSize: '0.6875rem', padding: '2px 8px' }}
+                            onClick={() => selectAllToAdd(unassigned)}
+                          >
+                            {unassigned.every((s) => selectedToAdd[s.id]) ? 'Deselect All' : 'Select All'}
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {unassigned.map((s) => (
+                            <div
+                              key={s.id}
+                              onClick={() => toggleAdd(s.id)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 10,
+                                padding: '8px 10px', borderRadius: 'var(--radius-md)',
+                                cursor: 'pointer', transition: 'background 0.15s',
+                                background: selectedToAdd[s.id] ? 'var(--green-50)' : 'var(--gray-50)',
+                                border: `1.5px solid ${selectedToAdd[s.id] ? 'var(--green-500)' : 'transparent'}`,
+                              }}
+                            >
+                              <input type="checkbox" checked={!!selectedToAdd[s.id]} onChange={() => toggleAdd(s.id)} onClick={(e) => e.stopPropagation()} />
+                              <div className="avatar" style={{ width: 28, height: 28, fontSize: '0.625rem', flexShrink: 0 }}>
+                                {s.photoURL ? <img src={s.photoURL} alt={s.name} /> : getInitials(s.name)}
+                              </div>
+                              <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>{s.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {addCount > 0 && (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            disabled={saving}
+                            onClick={() => handleAddMultiple(batch.id)}
+                            style={{ marginTop: 8 }}
+                          >
+                            <HiOutlineCheck /> Add {addCount} Student{addCount > 1 ? 's' : ''}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {unassigned.length === 0 && assigned.length === 0 && (
+                      <p style={{ fontSize: '0.8125rem', color: 'var(--gray-400)' }}>No students registered yet.</p>
+                    )}
                   </div>
                 )}
               </div>

@@ -8,7 +8,7 @@ import { uploadToCloudinary } from '../../utils/cloudinary';
 import toast from 'react-hot-toast';
 import {
   HiOutlineSearch, HiOutlineTrash, HiOutlinePlus,
-  HiOutlineX, HiOutlineCamera, HiOutlinePhone,
+  HiOutlineX, HiOutlineCamera,
 } from 'react-icons/hi';
 
 export default function AllStudents() {

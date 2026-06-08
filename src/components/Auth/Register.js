@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import {
   HiOutlineMail, HiOutlineLockClosed, HiOutlineEye, HiOutlineEyeOff,
   HiOutlineUser, HiOutlineCamera, HiOutlineArrowLeft, HiOutlineArrowRight,
-  HiOutlinePhone, HiOutlineLocationMarker, HiOutlineIdentification,
+  HiOutlinePhone, HiOutlineLocationMarker,
 } from 'react-icons/hi';
 import './Auth.css';
 
