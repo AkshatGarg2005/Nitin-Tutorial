@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import toast from 'react-hot-toast';
-import { HiOutlinePlus, HiOutlineCheckCircle, HiOutlineXCircle } from 'react-icons/hi';
+import { HiOutlinePlus, HiOutlineCheckCircle, HiOutlineXCircle, HiOutlineChevronDown, HiOutlineChevronUp } from 'react-icons/hi';
+import { getInitials } from '../../utils/helpers';
 
 export default function FeeForm() {
   const [students, setStudents] = useState([]);
@@ -12,20 +13,47 @@ export default function FeeForm() {
   const [loading, setLoading] = useState(true);
   const [fees, setFees] = useState([]);
   const [adding, setAdding] = useState(false);
+  const [pendingByStudent, setPendingByStudent] = useState([]);
+  const [showPending, setShowPending] = useState(true);
 
   useEffect(() => {
-    loadStudents();
+    loadInitialData();
   }, []);
 
   useEffect(() => {
     if (selectedStudent) loadStudentFees(selectedStudent);
   }, [selectedStudent]);
 
-  async function loadStudents() {
-    const q = query(collection(db, 'users'), where('role', '==', 'student'));
-    const snap = await getDocs(q);
-    setStudents(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    setLoading(false);
+  async function loadInitialData() {
+    try {
+      const [studentsSnap, feesSnap] = await Promise.all([
+        getDocs(query(collection(db, 'users'), where('role', '==', 'student'))),
+        getDocs(query(collection(db, 'fees'), where('paid', '==', false))),
+      ]);
+      const studentList = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setStudents(studentList);
+
+      // Group pending fees by student
+      const pendingFees = feesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const grouped = {};
+      pendingFees.forEach((fee) => {
+        if (!grouped[fee.studentId]) {
+          const student = studentList.find((s) => s.id === fee.studentId);
+          grouped[fee.studentId] = {
+            student: student || { id: fee.studentId, name: 'Unknown' },
+            fees: [],
+            totalAmount: 0,
+          };
+        }
+        grouped[fee.studentId].fees.push(fee);
+        grouped[fee.studentId].totalAmount += (fee.amount || 0);
+      });
+      setPendingByStudent(Object.values(grouped));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadStudentFees(studentId) {
@@ -61,6 +89,7 @@ export default function FeeForm() {
       setMonth('');
       setAmount('');
       loadStudentFees(selectedStudent);
+      loadInitialData(); // Refresh pending list
     } catch (err) {
       toast.error('Failed to add fee');
     } finally {
@@ -78,6 +107,8 @@ export default function FeeForm() {
       setFees((prev) =>
         prev.map((f) => (f.id === feeId ? { ...f, paid: !currentPaid } : f))
       );
+      // Refresh pending list
+      loadInitialData();
     } catch (err) {
       toast.error('Failed to update');
     }
@@ -93,6 +124,81 @@ export default function FeeForm() {
         <h1>💰 Manage Fees</h1>
         <p>Add fee records and update payment status</p>
       </div>
+
+      {/* Pending Fees Summary */}
+      {pendingByStudent.length > 0 && (
+        <div className="card" style={{
+          marginBottom: 24,
+          borderLeft: '4px solid var(--danger)',
+          background: 'var(--white)',
+        }}>
+          <div
+            style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              cursor: 'pointer',
+            }}
+            onClick={() => setShowPending(!showPending)}
+          >
+            <div>
+              <h3 style={{ fontSize: '1rem', color: 'var(--danger)', marginBottom: 2 }}>
+                ⚠️ Pending Fees
+              </h3>
+              <p style={{ fontSize: '0.8125rem', color: 'var(--gray-500)' }}>
+                {pendingByStudent.length} student{pendingByStudent.length > 1 ? 's' : ''} with unpaid fees
+              </p>
+            </div>
+            <span style={{ color: 'var(--gray-400)', fontSize: '1.25rem' }}>
+              {showPending ? <HiOutlineChevronUp /> : <HiOutlineChevronDown />}
+            </span>
+          </div>
+
+          {showPending && (
+            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {pendingByStudent.map(({ student, fees: pendingFees, totalAmount }) => (
+                <div
+                  key={student.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 12px', borderRadius: 'var(--radius-md)',
+                    background: 'var(--gray-50)', cursor: 'pointer',
+                  }}
+                  onClick={() => setSelectedStudent(student.id)}
+                >
+                  <div className="avatar" style={{ width: 36, height: 36, fontSize: '0.75rem', flexShrink: 0 }}>
+                    {student.photoURL ? (
+                      <img src={student.photoURL} alt={student.name} />
+                    ) : (
+                      getInitials(student.name)
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h4 style={{
+                      fontSize: '0.875rem', marginBottom: 2,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {student.name}
+                    </h4>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--gray-500)' }}>
+                      {pendingFees.map((f) => f.month).join(', ')}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{
+                      fontSize: '0.9375rem', fontWeight: 700, color: 'var(--danger)',
+                      fontFamily: 'var(--font-heading)',
+                    }}>
+                      ₹{totalAmount}
+                    </span>
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--gray-400)' }}>
+                      {pendingFees.length} pending
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add Form */}
       <div className="card" style={{ marginBottom: 24 }}>
