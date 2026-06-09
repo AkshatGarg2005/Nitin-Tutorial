@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getAttendancePercentage, formatDate, getInitials } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 import {
   HiOutlineDocumentText, HiOutlineCalendar, HiOutlineAcademicCap,
   HiOutlineCurrencyRupee, HiOutlineUsers, HiOutlineClipboardCheck,
-  HiOutlineLogout, HiOutlineTrendingUp, HiOutlineCheckCircle,
-  HiOutlineXCircle,
+  HiOutlineLogout,
 } from 'react-icons/hi';
 import './Dashboard.css';
 
@@ -24,6 +23,8 @@ export default function Dashboard() {
     totalAttendanceRecords: 0,
     pendingFees: 0,
     recentTests: [],
+    batchNames: [],
+    courseNames: [],
   });
   const [loading, setLoading] = useState(true);
 
@@ -81,6 +82,26 @@ export default function Dashboard() {
 
         const totalCourses = (userProfile?.courseIds || []).length;
 
+        // Fetch batch names
+        const batchIds = userProfile?.batchIds || [];
+        const batchNames = [];
+        for (const bid of batchIds) {
+          try {
+            const bSnap = await getDoc(doc(db, 'batches', bid));
+            if (bSnap.exists()) batchNames.push(bSnap.data().name);
+          } catch (e) { /* skip */ }
+        }
+
+        // Fetch course names
+        const courseIds = userProfile?.courseIds || [];
+        const courseNames = [];
+        for (const cid of courseIds) {
+          try {
+            const cSnap = await getDoc(doc(db, 'courses', cid));
+            if (cSnap.exists()) courseNames.push(cSnap.data().name);
+          } catch (e) { /* skip */ }
+        }
+
         setStats({
           totalStudents: 0,
           attendancePercent,
@@ -89,6 +110,8 @@ export default function Dashboard() {
           totalAttendanceRecords: 0,
           pendingFees: feesSnap.size,
           recentTests,
+          batchNames,
+          courseNames,
         });
       }
     } catch (err) {
@@ -134,6 +157,28 @@ export default function Dashboard() {
                 {isTeacher ? 'Welcome, Teacher' : 'Welcome back'}
               </p>
               <h1>{userProfile?.name || 'User'}</h1>
+              {!isTeacher && (stats.batchNames.length > 0 || stats.courseNames.length > 0) && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 6 }}>
+                  {stats.batchNames.map((name, i) => (
+                    <span key={'b' + i} style={{
+                      fontSize: '0.6875rem', padding: '2px 8px', borderRadius: 20,
+                      background: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.9)',
+                      fontWeight: 500, letterSpacing: '0.2px',
+                    }}>
+                      📦 {name}
+                    </span>
+                  ))}
+                  {stats.courseNames.map((name, i) => (
+                    <span key={'c' + i} style={{
+                      fontSize: '0.6875rem', padding: '2px 8px', borderRadius: 20,
+                      background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.85)',
+                      fontWeight: 500, letterSpacing: '0.2px',
+                    }}>
+                      🎓 {name}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <button className="btn-icon mobile-logout" onClick={handleLogout} title="Log out" id="mobile-logout">
