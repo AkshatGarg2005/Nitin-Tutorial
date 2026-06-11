@@ -145,6 +145,7 @@ export default function FeeForm() {
               </h3>
               <p style={{ fontSize: '0.8125rem', color: 'var(--gray-500)' }}>
                 {pendingByStudent.length} student{pendingByStudent.length > 1 ? 's' : ''} with unpaid fees
+                 • Total: <span style={{ fontWeight: 700, color: 'var(--danger)' }}>₹{pendingByStudent.reduce((sum, s) => sum + s.totalAmount, 0)}</span>
               </p>
             </div>
             <span style={{ color: 'var(--gray-400)', fontSize: '1.25rem' }}>
@@ -195,6 +196,24 @@ export default function FeeForm() {
                   </div>
                 </div>
               ))}
+
+              {/* Grand Total */}
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '12px 14px', borderRadius: 'var(--radius-md)',
+                background: 'var(--danger-light)', marginTop: 4,
+                borderTop: '2px solid var(--danger)',
+              }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--gray-700)' }}>
+                  Total Pending
+                </span>
+                <span style={{
+                  fontSize: '1.125rem', fontWeight: 700, color: 'var(--danger)',
+                  fontFamily: 'var(--font-heading)',
+                }}>
+                  ₹{pendingByStudent.reduce((sum, s) => sum + s.totalAmount, 0)}
+                </span>
+              </div>
             </div>
           )}
         </div>
